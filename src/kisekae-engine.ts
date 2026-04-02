@@ -69,13 +69,6 @@ export class KisekaeEngine {
         const { positionX, positionY, size, rotation } = model.modelPosition;
         const syncTasks: Promise<any>[] = [];
 
-        //add fps counter
-        const now = performance.now();
-        const fps = Math.round(1000 / (now - this.lastFrameTime));
-        this.lastFrameTime = now;
-        
-        console.log(`FPS: ${fps}`);
-
         // 1. Batch Move Items [cite: 517, 542]
         if (this.cachedHksItems.length > 0) {
           syncTasks.push(this.vts.itemMove({
