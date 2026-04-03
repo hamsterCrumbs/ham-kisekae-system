@@ -162,6 +162,7 @@ export class KisekaeEngine {
 
       if (this.cachedHksItems.length > 0 && model.modelLoaded) {
         const { positionX, positionY, size, rotation } = model.modelPosition;
+        console.log("moving " + this.cachedHksItems.length + " HKS items");
         await this.vts.itemMove({
           itemsToMove: this.cachedHksItems.map(item => ({
             itemInstanceID: item.instanceID,
@@ -172,6 +173,14 @@ export class KisekaeEngine {
             rotation
           }))
         });
+
+        //ensures the item wont go to yonders when attempted to be moved while sync is on
+        await Promise.all(this.cachedHksItems.map(item => 
+          this.vts.itemPin({
+            itemInstanceID: item.instanceID,
+            pin: false
+          })
+        ));
       }
       
 
