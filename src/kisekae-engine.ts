@@ -4,6 +4,7 @@ export class KisekaeEngine {
   private vts: ApiClient;
   private isRunning: boolean = false;
   private worker: Worker | null = null;
+  private workerUrl: string | null = null;
   
   // Cache for event-driven updates
   private cachedHksItems: any[] = [];
@@ -38,10 +39,11 @@ export class KisekaeEngine {
     `;
 
     const blob = new Blob([workerCode], { type: 'application/javascript' });
-    this.worker = new Worker(URL.createObjectURL(blob));
+    this.workerUrl = URL.createObjectURL(blob);
+    this.worker = new Worker(this.workerUrl);
 
     this.worker.onmessage = () => {
-      this.syncFrame(); // This runs even if the tab is hidden!
+      this.syncFrame(); // This runs even if the tab is hidden
     };
 
     this.worker.postMessage('start');
@@ -51,6 +53,12 @@ export class KisekaeEngine {
     this.isRunning = false;
     this.worker?.postMessage('stop');
     this.worker?.terminate();
+    
+    if (this.workerUrl) {
+      URL.revokeObjectURL(this.workerUrl);
+      this.workerUrl = null;
+    }
+    
     this.vts.events.modelLoaded.unsubscribe();
     this.vts.events.item.unsubscribe();
   }
@@ -59,7 +67,6 @@ export class KisekaeEngine {
     if (!this.isRunning || !this.vts) return;
 
     try {
-      // Gather data in parallel [cite: 148]
       const [model, paramList] = await Promise.all([
         this.vts.currentModel(),
         this.vts.live2DParameterList()
@@ -68,8 +75,18 @@ export class KisekaeEngine {
       if (model.modelLoaded) {
         const { positionX, positionY, size, rotation } = model.modelPosition;
         const syncTasks: Promise<any>[] = [];
+        const now = performance.now();
+        const fps = 1000 / (now - this.lastFrameTime);
+        this.lastFrameTime = now;
 
-        // 1. Batch Move Items [cite: 517, 542]
+        syncTasks.push(this.vts.injectParameterData({
+          parameterValues: [{
+            id: "ParamFPS",
+            //parse the fps value to an integer
+            value: Math.floor(Math.min(fps, 200)),
+          }]
+        }));
+
         if (this.cachedHksItems.length > 0) {
           syncTasks.push(this.vts.itemMove({
             itemsToMove: this.cachedHksItems.map(item => ({
@@ -83,7 +100,6 @@ export class KisekaeEngine {
           }));
         }
 
-        // 2. Batch Inject Parameters [cite: 323]
         const activeParams = paramList.parameters.filter(p => 
           p.name.startsWith("ParamCustom") || p.name.startsWith("ParamPart")
         );
@@ -120,7 +136,15 @@ export class KisekaeEngine {
         const customParams = paramList.parameters.filter(p => 
           p.name.startsWith("ParamCustom") || p.name.startsWith("ParamPart")
         );
-
+        
+        await this.vts.parameterCreation({
+          parameterName: "ParamFPS",
+          explanation: "HKS FPS Counter",
+          min: 0,
+          max: 200,
+          defaultValue: 0
+        });
+        
         await Promise.all(customParams.map(param => 
           this.vts.parameterCreation({
             parameterName: param.name,
@@ -135,6 +159,21 @@ export class KisekaeEngine {
       this.cachedHksItems = itemList.itemInstancesInScene.filter(
         item => item.type === 'Live2D' && item.fileName.toLowerCase().startsWith('hks_')
       );
+
+      if (this.cachedHksItems.length > 0 && model.modelLoaded) {
+        const { positionX, positionY, size, rotation } = model.modelPosition;
+        await this.vts.itemMove({
+          itemsToMove: this.cachedHksItems.map(item => ({
+            itemInstanceID: item.instanceID,
+            timeInSeconds: 0,
+            positionX,
+            positionY,
+            size: (size + 150) / 200,
+            rotation
+          }))
+        });
+      }
+      
 
       console.log(`Cache Refreshed: Found ${this.cachedHksItems.length} HKS items.`);
     } catch (e) {
